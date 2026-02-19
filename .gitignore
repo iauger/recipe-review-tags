@@ -1,0 +1,13 @@
+# data
+data/
+
+# python junk
+**/__pycache__/
+*.pyc
+
+# jupyter
+.ipynb_checkpoints/
+
+# zips / binaries
+*.zip
+*.mp4
