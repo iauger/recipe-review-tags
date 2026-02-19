@@ -11,3 +11,12 @@ data/
 # zips / binaries
 *.zip
 *.mp4
+
+# env files
+.env
+
+# VS Code settings
+.vscode/
+
+# Virtual Environments
+.venv/
