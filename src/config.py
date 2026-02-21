@@ -7,8 +7,12 @@ from dotenv import load_dotenv
 
 
 def repo_root() -> Path:
-    # src/config.py -> repo root
-    return Path(__file__).resolve().parent.parent
+    here = Path(__file__).resolve()
+    for p in [here.parent] + list(here.parents):
+        if (p / "requirements.txt").exists(): # crude heuristic for repo root
+            return p
+    # fallback: current behavior
+    return here.parents[3]
 
 
 def resolve_path(path: str | None, default: str) -> str:
@@ -62,7 +66,7 @@ def validate_settings(s: Settings) -> None:
             if not Path(p).exists():
                 raise FileNotFoundError(f"Missing required file: {p}")
 
-    for d in [s.processed_dir, s.models_dir]:
+    for d in [s.raw_dir, s.processed_dir, s.models_dir]:
         Path(d).mkdir(parents=True, exist_ok=True)
 
     if not (0.0 <= s.zero_shot_label_threshold <= 1.0):
