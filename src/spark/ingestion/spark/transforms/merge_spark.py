@@ -1,24 +1,128 @@
 from __future__ import annotations
 
 import logging
-import pandas as pd
+from typing import List, Tuple
+
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
 
 logger = logging.getLogger(__name__)
 
+# Column contracts
 
-def merge_datasets(recipes_df: pd.DataFrame, interactions_df: pd.DataFrame) -> pd.DataFrame:
-    merged = interactions_df.merge(
-        recipes_df,
-        how="inner",
-        left_on="recipe_id",
-        right_on="id",
+REVIEW_REQUIRED: List[str] = [
+    "user_id",
+    "recipe_id",
+    "date",
+    "rating",
+    "review_clean",
+]
+
+RECIPE_REQUIRED: List[str] = [
+    "id",  # will be aliased to recipe_id in gold_recipes
+    "name",
+    "ingredients_clean",
+    "steps_clean",
+    "tags_clean",
+    "description_clean",
+    "minutes",
+    "n_steps",
+    "n_ingredients",
+    "calories",
+    "fat",
+    "sugar",
+    "sodium",
+    "protein",
+    "saturated_fat",
+    "carbs",
+]
+
+
+# Helpers
+
+def _assert_has_columns(df: DataFrame, cols: List[str], label: str) -> None:
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"{label} missing required columns: {missing}. Columns: {df.columns}")
+
+
+def _add_liked(df: DataFrame, rating_col: str = "rating") -> DataFrame:
+    return df.withColumn("liked", (F.col(rating_col) >= F.lit(4.0)).cast("int"))
+
+
+def add_review_key(
+    df: DataFrame,
+    user_col: str = "user_id",
+    recipe_col: str = "recipe_id",
+    date_col: str = "date",
+    text_col: str = "review_clean",
+    key_col: str = "review_key",
+) -> DataFrame:
+    """
+    Deterministic key used to join zero-shot labels back to Spark rows later.
+    """
+    required = [user_col, recipe_col, date_col, text_col]
+    _assert_has_columns(df, required, "add_review_key input")
+
+    return df.withColumn(
+        key_col,
+        F.sha2(
+            F.concat_ws(
+                "||",
+                F.coalesce(F.col(user_col).cast("string"), F.lit("")),
+                F.coalesce(F.col(recipe_col).cast("string"), F.lit("")),
+                F.coalesce(F.col(date_col).cast("string"), F.lit("")),
+                F.coalesce(F.col(text_col).cast("string"), F.lit("")),
+            ),
+            256,
+        ),
     )
-    merged["liked"] = (merged["rating"] >= 4).astype("int8")
-    return merged
 
 
-def validate_merged_dataset(df: pd.DataFrame) -> pd.DataFrame:
-    required_columns = [
+# Gold Reviews
+
+def build_gold_reviews(interactions_df: DataFrame) -> DataFrame:
+    """
+    Gold reviews = review-level document table used for labeling + ML.
+    """
+    _assert_has_columns(interactions_df, REVIEW_REQUIRED, "interactions_df")
+
+    df = interactions_df.select(*REVIEW_REQUIRED)
+    df = _add_liked(df, rating_col="rating")
+
+    # Drop nulls on the columns we truly need for labeling + joining labels back
+    df = df.dropna(subset=["user_id", "recipe_id", "date", "rating", "review_clean"])
+
+    # Add deterministic join key for labeling outputs
+    df = add_review_key(df)
+
+    # Stable column order
+    ordered = [
+        "review_key",
+        "user_id",
+        "recipe_id",
+        "date",
+        "rating",
+        "liked",
+        "review_clean",
+    ]
+    return df.select(*ordered)
+
+
+# Gold Recipes
+
+def build_gold_recipes(recipes_df: DataFrame) -> DataFrame:
+    """
+    Gold recipes = recipe dimension table (one row per recipe).
+    """
+    _assert_has_columns(recipes_df, RECIPE_REQUIRED, "recipes_df")
+
+    df = recipes_df.select(*RECIPE_REQUIRED).withColumnRenamed("id", "recipe_id")
+
+    # Drop nulls on core fields required for enrichment
+    df = df.dropna(subset=[
+        "recipe_id",
+        "name",
         "ingredients_clean",
         "steps_clean",
         "tags_clean",
@@ -33,18 +137,50 @@ def validate_merged_dataset(df: pd.DataFrame) -> pd.DataFrame:
         "protein",
         "saturated_fat",
         "carbs",
-        "rating",
-    ]
-    return df.dropna(subset=required_columns)
+    ])
 
-
-def reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
-    ordered_columns = [
+    ordered = [
         "recipe_id",
         "name",
+        "ingredients_clean",
+        "steps_clean",
+        "tags_clean",
+        "description_clean",
+        "minutes",
+        "n_steps",
+        "n_ingredients",
+        "calories",
+        "fat",
+        "sugar",
+        "sodium",
+        "protein",
+        "saturated_fat",
+        "carbs",
+    ]
+    return df.select(*ordered)
+
+
+# Build Gold VE
+
+def build_gold_ve(gold_reviews: DataFrame, gold_recipes: DataFrame) -> DataFrame:
+    """
+    Optional wide table (reviews enriched with recipe fields).
+    Only run when you truly need the join (can be expensive on local Spark).
+    """
+    _assert_has_columns(gold_reviews, ["recipe_id"], "gold_reviews")
+    _assert_has_columns(gold_recipes, ["recipe_id"], "gold_recipes")
+
+    merged = gold_reviews.join(gold_recipes, on="recipe_id", how="inner")
+
+    # If you want a stable VE ordering:
+    ordered = [
+        "recipe_id",
+        "name",
+        "user_id",
+        "date",
         "rating",
         "liked",
-        "date",
+        "review_key",
         "review_clean",
         "ingredients_clean",
         "steps_clean",
@@ -61,49 +197,5 @@ def reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
         "saturated_fat",
         "carbs",
     ]
-    existing_cols = [c for c in ordered_columns if c in df.columns]
-    return df[existing_cols]
-
-
-def clone_data(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    df_ve = df.copy(deep=True)
-    df_cf = df.copy(deep=True)
-
-    drop_ve_cols = [
-        "id",
-        "user_id",
-        "contributor_id",
-        "submitted",
-        "description",
-        "steps",
-        "ingredients",
-        "tags",
-        "nutrition",
-        "review",
-    ]
-    keep_cf_cols = ["user_id", "recipe_id", "rating"]
-
-    for col in drop_ve_cols:
-        if col in df_ve.columns:
-            df_ve = df_ve.drop(columns=col)
-
-    df_cf = df_cf[[c for c in keep_cf_cols if c in df_cf.columns]]
-    return df_ve, df_cf
-
-
-def prepare_modeling_data(
-    recipes_df: pd.DataFrame,
-    interactions_df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    merged_df = merge_datasets(recipes_df, interactions_df)
-    validated_df = validate_merged_dataset(merged_df)
-    df_ve, df_cf = clone_data(validated_df)
-    
-    # Guardrail 
-    required_cf = {"user_id", "recipe_id", "rating"}
-    missing = required_cf - set(df_cf.columns)
-    if missing:
-        raise ValueError(f"CF dataset missing required columns: {sorted(missing)}")
-    
-    df_ve = reorder_columns(df_ve)
-    return df_ve, df_cf
+    existing = [c for c in ordered if c in merged.columns]
+    return merged.select(*existing)

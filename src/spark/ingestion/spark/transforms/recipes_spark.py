@@ -1,115 +1,90 @@
 from __future__ import annotations
 
-import ast
 import logging
-import pandas as pd
-from src.utils.text_cleaning import normalize_text
+from pyspark.sql import DataFrame, Column
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+from src.utils.text_cleaning import normalize_text_spark
 
 logger = logging.getLogger(__name__)
 
 
-def dtype_corrections(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df["id"] = df["id"].astype("string")
-    df["minutes"] = pd.to_numeric(df["minutes"], errors="coerce").astype("float32")
-    df["contributor_id"] = df["contributor_id"].astype("string")
-    df["submitted"] = pd.to_datetime(df["submitted"], errors="coerce")
-    df["n_steps"] = df["n_steps"].astype("float32")
-    df["n_ingredients"] = df["n_ingredients"].astype("float32")
-    return df
+def python_list_string_to_array_str(colname: str) -> Column:
+    """
+    Convert a string that looks like a Python list of strings into array<string>.
+    """
+    s = F.col(colname)
+    s_json = F.regexp_replace(s, r"'", '"')
+    return F.from_json(s_json, T.ArrayType(T.StringType()))
 
 
-def clean_ingredients(df: pd.DataFrame) -> pd.DataFrame:
-    if "ingredients_clean" in df.columns and df["ingredients_clean"].notna().any():
-        logger.info("ingredients_clean already present; skipping.")
-        return df
-
-    df = df.copy()
-    cleaned_lists = []
-
-    for raw_list in df["ingredients"]:
-        ing_list = ast.literal_eval(raw_list)
-        cleaned_ing_list = [normalize_text(ing).replace(" ", "_") for ing in ing_list]
-        cleaned_lists.append(" ".join(cleaned_ing_list))
-
-    df["ingredients_clean"] = cleaned_lists
-    return df
+def python_list_string_to_array_double(colname: str) -> Column:
+    """
+    Convert a string that looks like a Python list of numerics into array<double>.
+    """
+    s = F.col(colname)
+    s_json = F.regexp_replace(s, r"'", '"')
+    return F.from_json(s_json, T.ArrayType(T.DoubleType()))
 
 
-def clean_steps(df: pd.DataFrame) -> pd.DataFrame:
-    if "steps_clean" in df.columns and df["steps_clean"].notna().any():
-        logger.info("steps_clean already present; skipping.")
-        return df
-
-    df = df.copy()
-    cleaned_steps = []
-
-    for raw_steps in df["steps"]:
-        step_list = ast.literal_eval(raw_steps)
-        joined_steps = " ".join(step_list)
-        cleaned_steps.append(normalize_text(joined_steps))
-
-    df["steps_clean"] = cleaned_steps
-    return df
+def dtype_corrections(df: DataFrame) -> DataFrame:
+    # Spark casts are "coerce-like": invalid parses become null (similar to errors="coerce")
+    return (
+        df.withColumn("id", F.col("id").cast("string"))
+          .withColumn("minutes", F.col("minutes").cast("double"))
+          .withColumn("contributor_id", F.col("contributor_id").cast("string"))
+          # If submitted is yyyy-MM-dd, to_date is fine. If it includes time, to_timestamp is safer.
+          .withColumn("submitted", F.to_timestamp(F.col("submitted")))
+          .withColumn("n_steps", F.col("n_steps").cast("double"))
+          .withColumn("n_ingredients", F.col("n_ingredients").cast("double"))
+    )
 
 
-def clean_tags(df: pd.DataFrame) -> pd.DataFrame:
-    if "tags_clean" in df.columns and df["tags_clean"].notna().any():
-        logger.info("tags_clean already present; skipping.")
-        return df
-
-    df = df.copy()
-    cleaned_tags = []
-
-    for raw_tags in df["tags"]:
-        tag_list = ast.literal_eval(raw_tags)
-        cleaned_tag_list = [normalize_text(tag) for tag in tag_list]
-        cleaned_tags.append(" ".join(cleaned_tag_list))
-
-    df["tags_clean"] = cleaned_tags
-    return df
+def clean_ingredients(df: DataFrame) -> DataFrame:
+    # Parse -> normalize each ingredient -> replace spaces with underscores -> join
+    arr = python_list_string_to_array_str("ingredients")
+    cleaned_arr = F.transform(
+        arr,
+        lambda x: F.regexp_replace(normalize_text_spark(x), r"\s+", "_")
+    )
+    return df.withColumn("ingredients_clean", F.concat_ws(" ", cleaned_arr))
 
 
-def extract_nutrition(df: pd.DataFrame) -> pd.DataFrame:
-    nutrition_cols = ["calories", "fat", "sugar", "sodium", "protein", "saturated_fat", "carbs"]
-    if all(col in df.columns for col in nutrition_cols):
-        logger.info("Nutrition columns already present; skipping.")
-        return df
-
-    def parse_nutrition(nutrition_list: str) -> pd.Series:
-        lst = ast.literal_eval(nutrition_list)
-        return pd.Series(
-            {
-                "calories": lst[0],
-                "fat": lst[1],
-                "sugar": lst[2],
-                "sodium": lst[3],
-                "protein": lst[4],
-                "saturated_fat": lst[5],
-                "carbs": lst[6],
-            }
-        )
-
-    nutrition_df = df["nutrition"].apply(parse_nutrition)
-    df = df.copy()
-    df = pd.concat([df, nutrition_df], axis=1)
-    return df
+def clean_steps(df: DataFrame) -> DataFrame:
+    # Parse -> join steps -> normalize
+    arr = python_list_string_to_array_str("steps")
+    joined = F.concat_ws(" ", arr)
+    return df.withColumn("steps_clean", normalize_text_spark(joined))
 
 
-def clean_description(df: pd.DataFrame) -> pd.DataFrame:
-    if "description_clean" in df.columns and df["description_clean"].notna().any():
-        logger.info("description_clean already present; skipping.")
-        return df
-
-    df = df.copy()
-    df["description_clean"] = [
-        "" if pd.isna(desc) else normalize_text(desc)
-        for desc in df["description"]
-    ]
-    return df
+def clean_tags(df: DataFrame) -> DataFrame:
+    # Parse -> normalize each tag -> join
+    arr = python_list_string_to_array_str("tags")
+    cleaned_arr = F.transform(arr, lambda x: normalize_text_spark(x))
+    return df.withColumn("tags_clean", F.concat_ws(" ", cleaned_arr))
 
 
-def clean_recipes(df: pd.DataFrame) -> pd.DataFrame:
+def extract_nutrition(df: DataFrame) -> DataFrame:
+    # Parse nutrition list -> extract indices into columns
+    # Order: calories, fat, sugar, sodium, protein, saturated_fat, carbs
+    arr = python_list_string_to_array_double("nutrition")
+
+    return (
+        df.withColumn("calories",       F.element_at(arr, 1))  # 1-indexed
+          .withColumn("fat",            F.element_at(arr, 2))
+          .withColumn("sugar",          F.element_at(arr, 3))
+          .withColumn("sodium",         F.element_at(arr, 4))
+          .withColumn("protein",        F.element_at(arr, 5))
+          .withColumn("saturated_fat",  F.element_at(arr, 6))
+          .withColumn("carbs",          F.element_at(arr, 7))
+    )
+
+
+def clean_description(df: DataFrame) -> DataFrame:
+    return df.withColumn("description_clean", normalize_text_spark(F.col("description")))
+
+
+def clean_recipes(df: DataFrame) -> DataFrame:
     df = dtype_corrections(df)
     df = clean_ingredients(df)
     df = clean_steps(df)

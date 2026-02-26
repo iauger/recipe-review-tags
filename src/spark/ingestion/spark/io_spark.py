@@ -69,6 +69,10 @@ def read_raw_data(
         spark.read
         .option("header", True)
         .option("escape", '"')   # defensive for quoted fields
+        .option("quote", '"')    # ensure quotes are properly handled
+        .option("multiLine", True)  # allow multi-line fields
+        .option("mode", "PERMISSIVE")  # handle malformed lines gracefully
+        .option("columnNameOfCorruptRecord", "_corrupt_record")  # capture corrupt records
         .schema(RAW_RECIPES_SCHEMA)
         .csv(str(recipes_path))
     )

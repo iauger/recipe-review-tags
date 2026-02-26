@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import datetime
+from datetime import datetime
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from dotenv import load_dotenv
+import platform
+import re
+import logging
 
+logger = logging.getLogger(__name__)
+
+def _is_wsl() -> bool:
+    return bool(os.environ.get("WSL_DISTRO_NAME")) or "microsoft" in platform.release().lower()
+
+def _is_windows_path(p: str) -> bool:
+    return bool(re.match(r"^[A-Za-z]:\\", p)) or p.startswith("\\\\")
 
 def repo_root() -> Path:
     here = Path(__file__).resolve()
@@ -25,6 +37,10 @@ def resolve_path(path: str | None, default: str) -> str:
 
     if path.startswith("gs://"):
         return path
+    
+    if _is_wsl() and _is_windows_path(path):
+        logger.warning("Detected Windows-style path in WSL environment: %s. Attempting to resolve to WSL path.", path)
+        path = default  # fallback to default path in WSL if Windows path is detected
 
     p = Path(path)
 
@@ -41,9 +57,34 @@ class Settings:
     raw_recipes_path: str
     raw_interactions_path: str
 
+    features_run_id: str
+    
     raw_dir: str
     processed_dir: str
+    features_dir: str
+    features_run_dir: str
+    features_pipeline_model_dir: str
     models_dir: str
+    
+    bronze_dir: str
+    silver_dir: str
+    gold_dir: str
+
+    bronze_recipes_path: str
+    bronze_interactions_path: str
+    silver_recipes_path: str
+    silver_interactions_path: str
+    gold_recipe_path: str
+    gold_reviews_path: str
+    gold_ve_path: str
+    gold_cf_path: str
+    
+    labeled_gold_reviews_path: str
+    
+    features_dataset_path: str
+    features_splits_path: str
+    features_manifest_path: str
+    features_metrics_path: str
 
     spark_master: str
     spark_app_name: str
@@ -61,12 +102,15 @@ class Settings:
 
 
 def validate_settings(s: Settings) -> None:
-    if s.env == "local":
+    require_raw = os.getenv("REQUIRE_RAW_INPUTS", "0").strip() == "1"
+
+    if s.env == "local" and require_raw:
         for p in [s.raw_recipes_path, s.raw_interactions_path]:
             if not Path(p).exists():
                 raise FileNotFoundError(f"Missing required file: {p}")
 
-    for d in [s.raw_dir, s.processed_dir, s.models_dir]:
+    # still ensure directories exist
+    for d in [s.raw_dir, s.processed_dir, s.models_dir, s.bronze_dir, s.silver_dir, s.gold_dir, s.features_dir, s.features_run_dir, s.features_pipeline_model_dir]:
         Path(d).mkdir(parents=True, exist_ok=True)
 
     if not (0.0 <= s.zero_shot_label_threshold <= 1.0):
@@ -77,13 +121,41 @@ def load_settings() -> Settings:
     load_dotenv(override=False)
 
     env = os.getenv("ENV", "local").strip().lower()
+    
+    features_run_id = features_run_id = os.getenv("FEATURES_RUN_ID") or datetime.now().strftime("%Y%m%d_%H%M%S")
 
     raw_recipes_path = resolve_path(os.getenv("RAW_RECIPES_PATH"), "./data/raw/RAW_recipes.csv")
     raw_interactions_path = resolve_path(os.getenv("RAW_INTERACTIONS_PATH"), "./data/raw/RAW_interactions.csv")
 
     raw_dir = resolve_path(os.getenv("RAW_DIR"), "./data/raw")
     processed_dir = resolve_path(os.getenv("PROCESSED_DIR"), "./data/processed")
+    features_dir = resolve_path(os.getenv("FEATURES_DIR"), "./data/processed/features")
+    features_run_dir = str(Path(features_dir) / "runs" / features_run_id) if features_run_id else str(Path(features_dir) / "runs" / "latest")
+    features_pipeline_model_dir = str(Path(features_run_dir) / "pipeline_models")
+
     models_dir = resolve_path(os.getenv("MODELS_DIR"), "./data/models")
+    
+    bronze_dir = resolve_path(os.getenv("BRONZE_DIR"), str(Path(processed_dir) / "bronze"))
+    silver_dir = resolve_path(os.getenv("SILVER_DIR"), str(Path(processed_dir) / "silver"))
+    gold_dir   = resolve_path(os.getenv("GOLD_DIR"),   str(Path(processed_dir) / "gold"))
+
+    bronze_recipes_path = str(Path(bronze_dir) / "recipes_raw.parquet")
+    bronze_interactions_path = str(Path(bronze_dir) / "interactions_raw.parquet")
+
+    silver_recipes_path = str(Path(silver_dir) / "recipes_clean.parquet")
+    silver_interactions_path = str(Path(silver_dir) / "interactions_clean.parquet")
+
+    gold_recipe_path = str(Path(gold_dir) / "modeling_recipe.parquet")
+    gold_reviews_path = str(Path(gold_dir) / "modeling_reviews.parquet")
+    gold_ve_path = str(Path(gold_dir) / "modeling_ve.parquet")
+    gold_cf_path = str(Path(gold_dir) / "modeling_cf.parquet")
+    
+    labeled_gold_reviews_path = str(Path(processed_dir) / "labeling" / "zero_shot" / "labeled_gold_reviews.parquet")
+    
+    features_dataset_path = str(Path(features_run_dir) / "dataset.parquet")
+    features_splits_path = str(Path(features_run_dir) / "splits.parquet")
+    features_manifest_path = str(Path(features_run_dir) / "manifest.json")
+    features_metrics_path = str(Path(features_run_dir) / "metrics.json")
 
     spark_master = os.getenv("SPARK_MASTER", "local[*]").strip()
     spark_app_name = os.getenv("SPARK_APP_NAME", "recipe-review-tags").strip()
@@ -105,11 +177,31 @@ def load_settings() -> Settings:
 
     s = Settings(
         env=env,
+        features_run_id=features_run_id,
         raw_recipes_path=raw_recipes_path,
         raw_interactions_path=raw_interactions_path,
         raw_dir=raw_dir,
         processed_dir=processed_dir,
+        features_dir=features_dir,
+        features_run_dir=features_run_dir,
+        features_pipeline_model_dir=features_pipeline_model_dir,
         models_dir=models_dir,
+        bronze_dir=bronze_dir,
+        silver_dir=silver_dir,
+        gold_dir=gold_dir,
+        bronze_recipes_path=bronze_recipes_path,
+        bronze_interactions_path=bronze_interactions_path,
+        silver_recipes_path=silver_recipes_path,
+        silver_interactions_path=silver_interactions_path,
+        gold_recipe_path=gold_recipe_path,
+        gold_reviews_path=gold_reviews_path,    
+        gold_ve_path=gold_ve_path,
+        gold_cf_path=gold_cf_path,
+        labeled_gold_reviews_path=labeled_gold_reviews_path,  
+        features_dataset_path=features_dataset_path,
+        features_splits_path=features_splits_path,
+        features_manifest_path=features_manifest_path,
+        features_metrics_path=features_metrics_path,
         spark_master=spark_master,
         spark_app_name=spark_app_name,
         spark_driver_memory=spark_driver_memory,
