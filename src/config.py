@@ -85,6 +85,7 @@ class Settings:
     features_splits_path: str
     features_manifest_path: str
     features_metrics_path: str
+    features_tag_centroids_path: str
 
     spark_master: str
     spark_app_name: str
@@ -117,12 +118,10 @@ def validate_settings(s: Settings) -> None:
         raise ValueError("ZERO_SHOT_LABEL_THRESHOLD must be between 0 and 1.")
 
 
-def load_settings() -> Settings:
+def load_settings(*, prefer_latest_run: bool = True) -> Settings:
     load_dotenv(override=False)
 
     env = os.getenv("ENV", "local").strip().lower()
-    
-    features_run_id = features_run_id = os.getenv("FEATURES_RUN_ID") or datetime.now().strftime("%Y%m%d_%H%M%S")
 
     raw_recipes_path = resolve_path(os.getenv("RAW_RECIPES_PATH"), "./data/raw/RAW_recipes.csv")
     raw_interactions_path = resolve_path(os.getenv("RAW_INTERACTIONS_PATH"), "./data/raw/RAW_interactions.csv")
@@ -130,7 +129,19 @@ def load_settings() -> Settings:
     raw_dir = resolve_path(os.getenv("RAW_DIR"), "./data/raw")
     processed_dir = resolve_path(os.getenv("PROCESSED_DIR"), "./data/processed")
     features_dir = resolve_path(os.getenv("FEATURES_DIR"), "./data/processed/features")
-    features_run_dir = str(Path(features_dir) / "runs" / features_run_id) if features_run_id else str(Path(features_dir) / "runs" / "latest")
+    env_run = os.getenv("FEATURES_RUN_ID")
+
+    if env_run:
+        features_run_id = env_run
+    else:
+        latest_file = str(Path(features_dir) / "LATEST_RUN")
+
+        if prefer_latest_run and Path(latest_file).exists():
+            features_run_id = Path(latest_file).read_text().strip()
+        else:
+            features_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    features_run_dir = str(Path(features_dir) / "runs" / features_run_id)
     features_pipeline_model_dir = str(Path(features_run_dir) / "pipeline_models")
 
     models_dir = resolve_path(os.getenv("MODELS_DIR"), "./data/models")
@@ -156,6 +167,7 @@ def load_settings() -> Settings:
     features_splits_path = str(Path(features_run_dir) / "splits.parquet")
     features_manifest_path = str(Path(features_run_dir) / "manifest.json")
     features_metrics_path = str(Path(features_run_dir) / "metrics.json")
+    features_tag_centroids_path = str(Path(features_run_dir) / "tag_centroids.parquet")
 
     spark_master = os.getenv("SPARK_MASTER", "local[*]").strip()
     spark_app_name = os.getenv("SPARK_APP_NAME", "recipe-review-tags").strip()
@@ -202,6 +214,7 @@ def load_settings() -> Settings:
         features_splits_path=features_splits_path,
         features_manifest_path=features_manifest_path,
         features_metrics_path=features_metrics_path,
+        features_tag_centroids_path=features_tag_centroids_path,
         spark_master=spark_master,
         spark_app_name=spark_app_name,
         spark_driver_memory=spark_driver_memory,

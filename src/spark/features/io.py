@@ -46,13 +46,11 @@ def read_labeled_reviews(spark: SparkSession, s: Settings) -> DataFrame:
     logger.info("Reading labeled reviews from %s", path)
     df = spark.read.parquet(path)
 
-    # Minimal sanity checks (non-fatal but loud)
     required = ["review_key", "recipe_id", "review_clean", "zs_labels"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Labeled reviews missing required columns: {missing}")
 
-    # Drop fully null keys early
     df = df.filter(F.col("review_key").isNotNull()).filter(F.col("recipe_id").isNotNull())
 
     return df
@@ -68,9 +66,7 @@ def read_splits(spark: SparkSession, s: Settings) -> DataFrame:
     return spark.read.parquet(s.features_splits_path)
 
 
-# -------------------------
 # Writes
-# -------------------------
 
 def write_parquet(
     df: DataFrame,
@@ -139,9 +135,7 @@ def write_metrics(s: Settings, metrics: dict[str, Any]) -> None:
     path.write_text(json.dumps(metrics, indent=2, sort_keys=True))
 
 
-# -------------------------
 # Convenience utilities
-# -------------------------
 
 def summarize_splits(df: DataFrame, split_col: str = "split") -> dict[str, int]:
     """

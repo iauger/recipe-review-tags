@@ -32,7 +32,7 @@ class ZeroShotConfig:
     sample_seed: int = 42
 
     model_id: str = "valhalla/distilbart-mnli-12-1"  
-    batch_size: int = 16
+    batch_size: int = 4
     max_length: int = 128
 
      # fallback global threshold if polarity unknown
@@ -317,6 +317,61 @@ def write_zero_shot_output(pdf_out: pd.DataFrame, out_path: str) -> None:
     pdf_out.to_parquet(out_path, index=False)
     logger.info("Wrote zero-shot output to %s", out_path)
 
+def run_zero_shot_incremental_with_checkpoints(
+    input_parquet_path: str,
+    cfg: ZeroShotConfig,
+    processed_dir: str,
+    checkpoint_every: int = 500
+) -> str:
+    """
+    Incremental runner that saves progress to disk every 'checkpoint_every' samples.
+    """
+    _, out_path = build_zero_shot_io_paths(processed_dir)
+    out_p = Path(out_path)
+
+    # 1. Load the "to-do" list
+    pdf_in = pd.read_parquet(input_parquet_path)
+    
+    # 2. Filter out already processed keys
+    if out_p.exists():
+        pdf_existing_keys = pd.read_parquet(out_path, columns=[cfg.key_col])
+        existing_set = set(pdf_existing_keys[cfg.key_col].astype(str))
+        pdf_todo = pdf_in[~pdf_in[cfg.key_col].astype(str).isin(existing_set)].copy()
+        logger.info(f"Resume mode: {len(existing_set)} already done. {len(pdf_todo)} remaining.")
+    else:
+        pdf_todo = pdf_in.copy()
+        logger.info(f"Fresh run: {len(pdf_todo)} to process.")
+
+    if pdf_todo.empty:
+        logger.info("No new samples to process.")
+        return out_path
+
+    # 3. Process in chunks for checkpointing
+    # We break the 'todo' list into chunks of 'checkpoint_every'
+    rows_to_process = pdf_todo.to_dict('records')
+    total_new = len(rows_to_process)
+    
+    for i in range(0, total_new, checkpoint_every):
+        chunk = pd.DataFrame(rows_to_process[i : i + checkpoint_every])
+        
+        logger.info(f"Processing batch {i//checkpoint_every + 1}: samples {i} to {i + len(chunk)}")
+        
+        # Call your existing inference function for this small chunk
+        pdf_chunk_out = run_zero_shot_local(chunk, cfg)
+
+        # Append to the main output file immediately
+        if out_p.exists():
+            # Standard procedure: Read, Append, Write
+            # For even more safety, write to a temp file then rename (atomic swap)
+            pdf_master = pd.read_parquet(out_path)
+            pdf_master = pd.concat([pdf_master, pdf_chunk_out], ignore_index=True)
+            pdf_master.to_parquet(out_path, index=False)
+        else:
+            pdf_chunk_out.to_parquet(out_path, index=False)
+            
+        logger.info(f"Checkpoint saved at sample {i + len(chunk)} of {total_new}")
+
+    return out_path
 
 # -----------------------------
 # Convenience end-to-end helpers
