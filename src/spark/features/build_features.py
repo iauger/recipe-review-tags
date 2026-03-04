@@ -19,10 +19,13 @@ from src.spark.features.io import (
     write_metrics,
     write_parquet,
 )
+from src.spark.labeling.taxonomy import get_tag_ids
 from src.spark.features.splits import assign_recipe_splits, build_splits_table
 from src.spark.features.labels import add_binary_label_cols, get_label_cols
 from src.spark.features.pipeline import TextFeatureSpec, build_prep_pipeline, build_tfidf_pipeline, add_token_union_column, drop_intermediate_columns
 from src.spark.features.embeddings import Word2VecSpec, fit_word2vec, add_word2vec_embeddings
+from src.spark.features.prototypes import PrototypeSpec, build_tag_centroids
+from src.spark.features.thresholds import calculate_diagonal_thresholds
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,7 @@ def build_features(
     spark: SparkSession,
     *,
     labels: list[str] | None = None,
+    labeled_data_path: str | None = None,
 ) -> None:
     """
     End-to-end feature build for labeled gold set:
@@ -92,7 +96,8 @@ def build_features(
     # -------------------------
     # Read + split + labels
     # -------------------------
-    df = read_labeled_reviews(spark, s)
+    labeled_data_path = labeled_data_path if labeled_data_path else s.labeled_gold_reviews_path
+    df = read_labeled_reviews(spark, label_path=labeled_data_path)
 
     df = assign_recipe_splits(
         df,
@@ -164,6 +169,34 @@ def build_features(
     _ = df_embed.count()   # materialize cache
 
     # -------------------------
+    # Tag Centroids
+    # -------------------------
+    logger.info("Building Tag Centroids (Semantic Anchors)...")
+    p_spec = PrototypeSpec(
+        features_col=spec.output_col, # "features"
+        label_prefix="y_"
+    )
+    
+    # Generate centroids from the training set silver labels
+    centroids_df = build_tag_centroids(df_embed, spec=p_spec, labels=labels)
+    
+    # Save centroids for the downstream scale-out labeling
+    write_parquet(centroids_df, s.features_tag_centroids_path)
+    logger.info("Saved centroids to %s", s.features_tag_centroids_path)
+
+    # -------------------------
+    # Automated Thresholding
+    # -------------------------
+    logger.info("Calculating Data-Driven Similarity Thresholds...")
+    
+    # This implements the "diagonal" self-similarity thresholds from the paper
+    threshold_map = calculate_diagonal_thresholds(
+        labeled_df=df_embed,
+        centroids_df=centroids_df,
+        spec=p_spec
+    )
+    
+    # -------------------------
     # TF-IDF pipeline
     # -------------------------
     if spec.tfidf_included:
@@ -222,6 +255,8 @@ def build_features(
     metrics["w2v_vector_size"] = w2v_spec.vector_size
     metrics["w2v_window_size"] = w2v_spec.window_size
     metrics["w2v_min_count"] = w2v_spec.min_count
+    metrics["tag_thresholds"] = threshold_map
+    metrics["split_counts"] = _split_counts(df_out, "split")
 
     write_metrics(s, metrics)
 
@@ -249,6 +284,139 @@ def build_features(
     logger.info("Wrote manifest: %s", s.features_manifest_path)
     logger.info("=== Done ===")
 
+
+# src/spark/features/build_features.py
+
+def build_features_with_full_corpus_w2v(
+    spark: SparkSession,
+    *,
+    labels: list[str] | None = None,
+    labeled_data_path: str | None = None,
+) -> None:
+    """
+    Advanced Build: Fits Word2Vec on the 1M+ review corpus for robust 
+    semantic context, then calibrates thresholds using labeled data.
+    """
+    if labels is None:
+        labels = get_tag_ids() # Use all tags from taxonomy
+
+    s = load_settings(prefer_latest_run=False)
+    ensure_dirs(s)
+
+    logger.info("=== Full Corpus Feature Build ===")
+    
+    # 1. Load Data
+    label_path = labeled_data_path if labeled_data_path else s.labeled_gold_reviews_path
+    labeled_df = read_labeled_reviews(spark, label_path=label_path)
+    full_corpus_df = spark.read.parquet(s.silver_interactions_path)
+    
+    # 2. Prep Labeled Set (Splits & Labels)
+    labeled_df = assign_recipe_splits(labeled_df, recipe_id_col="recipe_id")
+    labeled_df = add_binary_label_cols(labeled_df, labels)
+    label_cols = get_label_cols(labeled_df)
+
+    # 3. Fit Prep Pipeline on FULL Corpus
+    # This ensures "salty" and "acidic" are tokenized properly across all contexts
+    spec = TextFeatureSpec(text_col="review_clean", output_col="features", token_union_col="tokens_all")
+    
+    logger.info("Fitting Text Prep Pipeline on full corpus...")
+    prep_model = build_prep_pipeline(spec).fit(full_corpus_df)
+    prep_model.write().overwrite().save(f"{s.features_pipeline_model_dir}/prep_model") # Save early
+    
+    # 4. Fit Word2Vec on FULL Corpus
+    w2v_spec = Word2VecSpec(input_col=spec.token_union_col, output_col="review_embeddings", vector_size=128)
+    
+    logger.info("Transforming full corpus for Word2Vec training...")
+    full_tokens = add_token_union_column(prep_model.transform(full_corpus_df), spec).select("tokens_all")
+    full_tokens = full_tokens.repartition(8) 
+    
+    logger.info("Fitting Word2Vec on 1M+ reviews...")
+    w2v_model = fit_word2vec(full_tokens, spec=w2v_spec)
+    w2v_model.write().overwrite().save(f"{s.features_pipeline_model_dir}/w2v_model")
+    
+    # 5. Transform the Labeled Set using the "Global" models
+    logger.info("Generating embeddings for the labeled subset...")
+    df_prep = add_token_union_column(prep_model.transform(labeled_df), spec)
+    df_embed = add_word2vec_embeddings(df_prep, model=w2v_model, spec=w2v_spec)
+    df_embed = df_embed.withColumn(spec.output_col, F.col(w2v_spec.output_col))
+    
+    # 6. Calibrate Centroids & Thresholds (Algorithms 4 & 5)
+    p_spec = PrototypeSpec(features_col=spec.output_col, label_prefix="y_")
+    centroids_df = build_tag_centroids(df_embed, spec=p_spec, labels=labels)
+    
+    threshold_map = calculate_diagonal_thresholds(
+        labeled_df=df_embed, 
+        centroids_df=centroids_df, 
+        spec=p_spec
+    )
+
+    # -------------------------
+    # Write dataset
+    # -------------------------
+    # Use existing helper to remove tokens, ngrams, and intermediate TF columns
+    df_out = drop_intermediate_columns(df_embed, spec)
+    
+    # Define only the essential columns for the final Gold dataset
+    keep_cols = [
+        "review_key", "user_id", "recipe_id", "date", 
+        "rating", "liked", "review_clean", "split",
+        spec.output_col # This is your "features" (review_embeddings)
+    ] + label_cols
+
+    # Ensure we only select columns that actually exist
+    final_cols = [c for c in keep_cols if c in df_out.columns]
+    df_out = df_out.select(*final_cols)
+
+    write_parquet(df_out, s.features_dataset_path, partition_cols=None)
+
+    # -------------------------
+    # Metrics + manifest
+    # -------------------------
+    metrics: dict[str, Any] = {}
+    metrics["split_counts"] = _split_counts(df_out, "split")
+    metrics["label_prevalence_by_split"] = _label_prevalence_by_split(df_out, label_cols, "split")
+    metrics["num_features_hashing"] = spec.num_features
+    metrics["ngram_n"] = spec.ngram_n if spec.enable_ngrams else None
+    metrics["min_doc_freq"] = spec.min_doc_freq
+    metrics["w2v_vector_size"] = w2v_spec.vector_size
+    metrics["w2v_window_size"] = w2v_spec.window_size
+    metrics["w2v_min_count"] = w2v_spec.min_count
+    metrics["tag_thresholds"] = threshold_map
+    metrics["split_counts"] = _split_counts(df_out, "split")
+
+    write_metrics(s, metrics)
+
+    manifest_payload = {
+        "feature_spec": spec.__dict__,
+        "w2v_spec": w2v_spec.__dict__,
+        "metrics_path": s.features_metrics_path,
+    }
+    write_manifest(s, manifest_payload)
+    
+    latest_path = Path(s.features_dir) / "LATEST_RUN"
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Spark parquet writes a directory. Check existence before updating pointer.
+    if not Path(s.features_dataset_path).exists():
+        raise FileNotFoundError(f"Feature dataset not found after write: {s.features_dataset_path}")
+
+    if latest_path.exists():
+        current_stack = latest_path.read_text().strip()
+        # Only append if this ID isn't already the latest entry
+        if not current_stack.endswith(s.features_run_id):
+            new_stack = f"{current_stack}, {s.features_run_id}"
+            latest_path.write_text(new_stack)
+    else:
+        latest_path.write_text(s.features_run_id)
+    
+    logger.info("Wrote LATEST_RUN pointer: %s -> %s", str(latest_path), s.features_run_id)
+    logger.info("Wrote splits: %s", s.features_splits_path)
+    logger.info("Wrote dataset: %s", s.features_dataset_path)
+    logger.info("Wrote models dir: %s", s.features_pipeline_model_dir)
+    logger.info("Wrote metrics: %s", s.features_metrics_path)
+    logger.info("Wrote manifest: %s", s.features_manifest_path)
+    logger.info("=== Done ===")
+    
 # Convenience CLI entrypoint
 if __name__ == "__main__":
     from src.spark.session import get_spark  # adjust to your spark session helper if different

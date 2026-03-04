@@ -1,3 +1,4 @@
+# src/config.py
 from __future__ import annotations
 
 import datetime
@@ -58,6 +59,7 @@ class Settings:
     raw_interactions_path: str
 
     features_run_id: str
+    previous_run_id: str 
     
     raw_dir: str
     processed_dir: str
@@ -100,6 +102,12 @@ class Settings:
     zero_shot_batch_size: int
     zero_shot_max_length: int
     zero_shot_label_threshold: float
+    
+    @property
+    def previous_tag_centroids_path(self) -> str | None:
+        if not self.previous_run_id or self.previous_run_id == self.features_run_id or self.previous_run_id == "":
+            return None
+        return str(Path(self.features_dir) / "runs" / self.previous_run_id / "tag_centroids.parquet")
 
 
 def validate_settings(s: Settings) -> None:
@@ -131,14 +139,23 @@ def load_settings(*, prefer_latest_run: bool = True) -> Settings:
     features_dir = resolve_path(os.getenv("FEATURES_DIR"), "./data/processed/features")
     env_run = os.getenv("FEATURES_RUN_ID")
 
+    features_run_id = None
+    previous_run_id = ""
+
     if env_run:
         features_run_id = env_run
     else:
-        latest_file = str(Path(features_dir) / "LATEST_RUN")
-
-        if prefer_latest_run and Path(latest_file).exists():
-            features_run_id = Path(latest_file).read_text().strip()
-        else:
+        latest_file = Path(features_dir) / "LATEST_RUN"
+        if prefer_latest_run and latest_file.exists():
+            # Read the stack and split by comma
+            run_stack = [r.strip() for r in latest_file.read_text().split(",") if r.strip()]
+            if run_stack:
+                features_run_id = run_stack[-1]  # Top of stack
+                if len(run_stack) >= 2:
+                    previous_run_id = run_stack[-2] # One level down
+        
+        # Fallback if no stack exists
+        if not features_run_id:
             features_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     features_run_dir = str(Path(features_dir) / "runs" / features_run_id)
@@ -190,6 +207,7 @@ def load_settings(*, prefer_latest_run: bool = True) -> Settings:
     s = Settings(
         env=env,
         features_run_id=features_run_id,
+        previous_run_id=previous_run_id,
         raw_recipes_path=raw_recipes_path,
         raw_interactions_path=raw_interactions_path,
         raw_dir=raw_dir,

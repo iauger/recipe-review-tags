@@ -1,6 +1,7 @@
 # src/spark/features/embeddings.py
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -16,9 +17,9 @@ logger = logging.getLogger(__name__)
 class Word2VecSpec:
     input_col: str = "tokens_all"     
     output_col: str = "embeddings"    
-    vector_size: int = 128
-    window_size: int = 5
-    min_count: int = 2
+    vector_size: int = 300
+    window_size: int = 2
+    min_count: int = 5
     max_iter: int = 10
     seed: int = 42
 
@@ -34,8 +35,8 @@ def fit_word2vec(train_df: DataFrame, *, spec: Word2VecSpec) -> Word2VecModel:
         vectorSize=spec.vector_size,
         windowSize=spec.window_size,
         minCount=spec.min_count,
-        maxIter=spec.max_iter,
-        seed=spec.seed,
+        maxIter=15,
+        seed=datetime.now().microsecond  # Use current time as seed for variability across runs
     )
 
     # Basic guard: drop null/empty token rows for training
@@ -48,9 +49,6 @@ def fit_word2vec(train_df: DataFrame, *, spec: Word2VecSpec) -> Word2VecModel:
         spec.input_col, spec.output_col, spec.vector_size, spec.window_size, spec.min_count, spec.max_iter
     )
     return w2v.fit(train_tokens)
-
-
-# src/spark/features/embeddings.py
 
 def add_word2vec_embeddings(df: DataFrame, *, model: Word2VecModel, spec: Word2VecSpec) -> DataFrame:
     out = spec.output_col

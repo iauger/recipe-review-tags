@@ -38,13 +38,13 @@ def _maybe_repartition(df: DataFrame, n: Optional[int]) -> DataFrame:
 # Reads
 # -------------------------
 
-def read_labeled_reviews(spark: SparkSession, s: Settings) -> DataFrame:
+def read_labeled_reviews(spark: SparkSession, label_path: str) -> DataFrame:
     """
     Read the labeled gold reviews parquet used for training baseline models.
     """
-    path = s.labeled_gold_reviews_path
-    logger.info("Reading labeled reviews from %s", path)
-    df = spark.read.parquet(path)
+    
+    logger.info("Reading labeled reviews from %s", label_path)
+    df = spark.read.parquet(label_path)
 
     required = ["review_key", "recipe_id", "review_clean", "zs_labels"]
     missing = [c for c in required if c not in df.columns]

@@ -133,14 +133,12 @@ def _log_runtime_diagnostics(s: Settings, driver_py: str, worker_py: str) -> Non
 # Public API
 # -------------------------
 
+# src/spark/session.py
+# ... (imports and helpers stay the same) ...
+
 def get_spark(app_name: str | None = None, *, debug: bool = False) -> SparkSession:
     """
     Create a SparkSession using settings from .env/config.py.
-
-    Goals:
-      - WSL/Linux: "just works" without winutils/HADOOP_HOME
-      - Windows: stable for reading/transforms; parquet writes may still require winutils/Hadoop
-      - Prevent accidental Windows JAVA_HOME and Spark installs leaking into WSL runs
     """
     s = load_settings()
 
@@ -148,12 +146,10 @@ def get_spark(app_name: str | None = None, *, debug: bool = False) -> SparkSessi
     _configure_java_home(s)
 
     if _is_wsl():
-        # This only affects binding in some environments; safe to set if you keep seeing warnings.
         os.environ.setdefault("SPARK_LOCAL_IP", "127.0.0.1")
         
     driver_py, worker_py = _resolve_python(s)
 
-    # Force Spark to use the same python as the current interpreter by default
     os.environ["PYSPARK_DRIVER_PYTHON"] = driver_py
     os.environ["PYSPARK_PYTHON"] = worker_py
 
@@ -166,36 +162,39 @@ def get_spark(app_name: str | None = None, *, debug: bool = False) -> SparkSessi
         builder
         .master(s.spark_master)
         .appName(app_name or s.spark_app_name)
+        
+        # Pulling from .env/Settings to handle the 1.6GB Word2Vec model
         .config("spark.driver.memory", s.spark_driver_memory)
-
-        # Ensure python consistency at Spark-conf level too
+        .config("spark.driver.maxResultSize", getattr(s, 'spark_driver_max_result_size', '4g'))
+        .config("spark.executor.memory", "2g")
+        .config("spark.memory.fraction", "0.6")  
+        
+        # Ensure python consistency
         .config("spark.pyspark.driver.python", driver_py)
         .config("spark.pyspark.python", worker_py)
 
-        # Arrow off until you explicitly need it
-        .config("spark.sql.execution.arrow.pyspark.enabled", "false")
-
-        # Quiet UI
-        .config("spark.ui.enabled", "false")
-        .config("spark.ui.showConsoleProgress", "false")
+        # Performance and Monitoring
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true")
+        .config("spark.ui.enabled", "true")
+        .config("spark.ui.showConsoleProgress", "true")
         
         .config("spark.driver.host", "127.0.0.1")
         .config("spark.driver.bindAddress", "127.0.0.1")
-        .config("spark.local.ip", "127.0.0.1")
     )
 
-    # Windows-only mitigations (do NOT apply in WSL/Linux)
+    # Windows-specific logic remains unchanged
+    if _is_windows():
+        b = b.config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2") \
+             .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem")
+
+    return b.getOrCreate()
+
     if _is_windows():
         b = (
             b
-            # Networking stability on Windows localhost
             .config("spark.driver.host", "127.0.0.1")
             .config("spark.driver.bindAddress", "127.0.0.1")
-
-            # Less fragile output commit behavior
             .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
-
-            # Reduce NativeIO / checksum paths that often explode on Windows without proper native libs
             .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem")
             .config("spark.hadoop.fs.file.impl.disable.cache", "true")
         )

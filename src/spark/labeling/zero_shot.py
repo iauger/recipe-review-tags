@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
+from collections import Counter
 import pandas as pd
 
 from pyspark.sql import DataFrame, SparkSession
@@ -13,6 +13,7 @@ from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 from src.spark.labeling.taxonomy import get_label_to_hypotheses, get_tag_ids, get_tag_polarity
+from src.spark.labeling.taxonomy import get_taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -146,9 +147,7 @@ def attach_zero_shot_labels(
     return df_base.join(df_labels, on=key_col, how="inner")
 
 
-# -----------------------------
-# Local (pandas) inference
-# -----------------------------
+# Local inference
 
 def _ensure_hf_available() -> None:
     try:
@@ -446,3 +445,23 @@ def attach_zero_shot_labels_to_gold(
     logger.info("Zero-shot input parquet was at %s (for reference)", inp_path)
 
     return out_path
+
+def run_final_label_report(labeled_path):
+    # Load the synced parquet into Pandas for faster EDA 
+    pdf = pd.read_parquet(labeled_path)
+    
+    print(f"--- Final Labeling Report: {Path(labeled_path).name} ---")
+    print(f"Total Labeled Samples: {len(pdf):,}")
+    print(f"Avg Labels/Review: {pdf['zs_num_labels'].mean():.2f}")
+    
+    # Per-Tag Prevalence
+    all_labels = [label for sublist in pdf['zs_labels'].tolist() for label in sublist]
+    tag_counts = Counter(all_labels)
+    
+    print("\nTop Tags (% of dataset):")
+    for tag, count in tag_counts.most_common():
+        print(f"{tag:.<30} {count:,} ({(count/len(pdf))*100:.2f}%)")
+
+    # Check for "Zero-Label" reviews (Potential threshold issues) 
+    unlabeled_count = len(pdf[pdf['zs_num_labels'] == 0])
+    print(f"\nReviews with 0 labels: {unlabeled_count} ({(unlabeled_count/len(pdf))*100:.2f}%)")

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
@@ -21,22 +21,30 @@ class SimilaritySpec:
     centroid_vec_col: str = "centroid"
     out_score_col: str = "sim"
 
-def _native_cosine_sim(col_a: str, col_b: str) -> Column:
+
+def _native_cosine_sim(col_a: Union[str, Column], col_b: Union[str, Column]) -> Column:
     """
-    Calculates cosine similarity using native Spark SQL functions.
+    Calculates cosine similarity using native Spark SQL functions with explicit naming.
     Matches the logic: dot(a, b) / (norm(a) * norm(b))
     """
+    # 1. Resolve names/columns to fix Pylance/AnalysisException resolution issues
+    c1 = F.col(col_a) if isinstance(col_a, str) else col_a
+    c2 = F.col(col_b) if isinstance(col_b, str) else col_b
+
     def square_sum(col):
         return F.aggregate(col, F.lit(0.0), lambda acc, x: acc + (x * x))
 
+    # 2. Name zipped fields explicitly to fix [INVALID_EXTRACT_FIELD_TYPE]
+    # This prevents Spark from defaulting to numeric indices "0" and "1"
+    
     dot_product = F.aggregate(
-        F.arrays_zip(col_a, col_b),
+        F.arrays_zip(c1.alias("a"), c2.alias("b")),
         F.lit(0.0),
-        lambda acc, x: acc + (x[col_a] * x[col_b])
+        lambda acc, x: acc + (x["a"] * x["b"])
     )
     
-    norm_a = F.sqrt(square_sum(col_a))
-    norm_b = F.sqrt(square_sum(col_b))
+    norm_a = F.sqrt(square_sum(c1))
+    norm_b = F.sqrt(square_sum(c2))
     
     return F.when((norm_a == 0.0) | (norm_b == 0.0), 0.0).otherwise(dot_product / (norm_a * norm_b))
 
