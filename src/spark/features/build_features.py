@@ -146,8 +146,8 @@ def build_features(
     w2v_spec = Word2VecSpec(
         input_col=spec.token_union_col,  # "tokens_all"
         output_col="review_embeddings",
-        vector_size=128,
-        window_size=5,
+        vector_size=300,
+        window_size=3,
         min_count=2,
         max_iter=10,
         seed=42,
@@ -328,7 +328,7 @@ def build_features_with_full_corpus_w2v(
     
     logger.info("Transforming full corpus for Word2Vec training...")
     full_tokens = add_token_union_column(prep_model.transform(full_corpus_df), spec).select("tokens_all")
-    full_tokens = full_tokens.repartition(8) 
+    full_tokens = full_tokens.repartition(200) 
     
     logger.info("Fitting Word2Vec on 1M+ reviews...")
     w2v_model = fit_word2vec(full_tokens, spec=w2v_spec)

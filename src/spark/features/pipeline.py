@@ -11,6 +11,7 @@ from pyspark.ml.feature import (
     NGram,
     HashingTF,
     IDF,
+    SQLTransformer,
 )
 
 from pyspark.sql import DataFrame
@@ -37,6 +38,10 @@ class TextFeatureSpec:
     token_col: str = "tokens"
     tokenizer_pattern: str = r"\w+"
     min_token_length: int = 2
+    
+    # Pruning
+    min_token_count: int = 15 # Minimum review length
+    max_token_count: int = 180 # Maximum review length
     
      # Stopwords
     use_default_stopwords: bool = True
@@ -97,7 +102,7 @@ def build_prep_pipeline(spec: TextFeatureSpec) -> Pipeline:
         toLowercase=True,
         gaps=False,
     )
-
+    
     sw = StopWordsRemover(
         inputCol=spec.token_col,
         outputCol=f"{spec.token_col}_nostop",

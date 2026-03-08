@@ -22,7 +22,10 @@ def dtype_corrections(df: DataFrame) -> DataFrame:
 
     return df
 
-    
+def prune_by_length(df: DataFrame, min_tokens: int = 15, max_tokens: int = 120) -> DataFrame:
+    return df.withColumn("token_count", F.size(F.split(F.col("review"), " "))) \
+             .filter((F.col("token_count") >= min_tokens) & 
+                     (F.col("token_count") <= max_tokens))   
 
 def clean_reviews(df: DataFrame) -> DataFrame:
     if "review" not in df.columns:
@@ -33,6 +36,7 @@ def clean_reviews(df: DataFrame) -> DataFrame:
 
 
 def clean_interactions(df: DataFrame) -> DataFrame:
+    df = prune_by_length(df)
     df = clean_reviews(df)
     df = dtype_corrections(df)
     return df

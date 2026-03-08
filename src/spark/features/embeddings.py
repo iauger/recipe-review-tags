@@ -18,7 +18,7 @@ class Word2VecSpec:
     input_col: str = "tokens_all"     
     output_col: str = "embeddings"    
     vector_size: int = 300
-    window_size: int = 2
+    window_size: int = 3
     min_count: int = 5
     max_iter: int = 10
     seed: int = 42

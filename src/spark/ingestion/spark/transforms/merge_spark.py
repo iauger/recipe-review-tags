@@ -90,8 +90,9 @@ def build_gold_reviews(interactions_df: DataFrame) -> DataFrame:
     df = interactions_df.select(*REVIEW_REQUIRED)
     df = _add_liked(df, rating_col="rating")
 
-    # Drop nulls on the columns we truly need for labeling + joining labels back
+    # Drop nulls and duplicates on the columns we truly need for labeling + joining labels back
     df = df.dropna(subset=["user_id", "recipe_id", "date", "rating", "review_clean"])
+    df = df.dropDuplicates(["user_id", "recipe_id", "date", "rating", "review_clean"])
 
     # Add deterministic join key for labeling outputs
     df = add_review_key(df)
