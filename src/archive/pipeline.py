@@ -40,12 +40,18 @@ class TextFeatureSpec:
     min_token_length: int = 2
     
     # Pruning
-    min_token_count: int = 15 # Minimum review length
-    max_token_count: int = 180 # Maximum review length
+    min_token_count: int = 12 # Minimum review length
+    max_token_count: int = 120 # Maximum review length
     
      # Stopwords
     use_default_stopwords: bool = True
-    extra_stopwords: tuple[str, ...] = ()
+    extra_stopwords: tuple[str, ...] = (
+        'however', 'actually', 'although', 'btw', 'besides', 'anyway', 
+        'anyhow', 'regardless', 'also', 'plus', 'since', 'guess', 'think', 
+        'maybe', 'perhaps', 'suspect', 'wonder', 'wondering', 'suppose', 
+        'lol', 'amp', 'basically', 'totally', 'rather', 'meant', 'case', 
+        'favor', 'course', 'especially'
+    )
     keep_negations: bool = True  # common for complaint tags
     
     # N-grams
@@ -62,7 +68,7 @@ class TextFeatureSpec:
     min_doc_freq: int = 2 # IDF param
     
     # Intermediate output for debugging/analysis
-    keep_intermediate: bool = False
+    keep_intermediate: bool = True
     
     # Whether to include TF-IDF or just vector embeddings
     tfidf_included: bool = True
@@ -83,7 +89,7 @@ def build_stopwords(spec: TextFeatureSpec) -> list[str]:
     if spec.keep_negations:
         negations = {"no", "nor", "not", "never", "none", "n't"}
         stopwords = [w for w in stopwords if w not in negations]
-    
+        
     # Deduplicate and return
     seen = set()
     out = []

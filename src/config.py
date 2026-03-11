@@ -1,15 +1,14 @@
 # src/config.py
 from __future__ import annotations
 
-import datetime
-from datetime import datetime
 import os
-from dataclasses import dataclass
-from pathlib import Path
-from dotenv import load_dotenv
 import platform
 import re
 import logging
+from datetime import datetime
+from dataclasses import dataclass
+from pathlib import Path
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -22,32 +21,23 @@ def _is_windows_path(p: str) -> bool:
 def repo_root() -> Path:
     here = Path(__file__).resolve()
     for p in [here.parent] + list(here.parents):
-        if (p / "requirements.txt").exists(): # crude heuristic for repo root
+        if (p / "requirements.txt").exists(): 
             return p
-    # fallback: current behavior
     return here.parents[3]
-
 
 def resolve_path(path: str | None, default: str) -> str:
     root = repo_root()
-
     if not path:
         path = default
-
     path = path.strip()
-
     if path.startswith("gs://"):
         return path
-    
     if _is_wsl() and _is_windows_path(path):
-        logger.warning("Detected Windows-style path in WSL environment: %s. Attempting to resolve to WSL path.", path)
-        path = default  # fallback to default path in WSL if Windows path is detected
-
+        logger.warning("Detected Windows-style path in WSL. Attempting to resolve to WSL path.")
+        path = default 
     p = Path(path)
-
     if p.is_absolute():
         return str(p)
-
     return str((root / p).resolve())
 
 
@@ -66,7 +56,6 @@ class Settings:
     features_dir: str
     features_run_dir: str
     features_pipeline_model_dir: str
-    models_dir: str
     
     bronze_dir: str
     silver_dir: str
@@ -78,8 +67,6 @@ class Settings:
     silver_interactions_path: str
     gold_recipe_path: str
     gold_reviews_path: str
-    gold_ve_path: str
-    gold_cf_path: str
     
     labeled_gold_reviews_path: str
     
@@ -118,8 +105,7 @@ def validate_settings(s: Settings) -> None:
             if not Path(p).exists():
                 raise FileNotFoundError(f"Missing required file: {p}")
 
-    # still ensure directories exist
-    for d in [s.raw_dir, s.processed_dir, s.models_dir, s.bronze_dir, s.silver_dir, s.gold_dir, s.features_dir, s.features_run_dir, s.features_pipeline_model_dir]:
+    for d in [s.raw_dir, s.processed_dir, s.bronze_dir, s.silver_dir, s.gold_dir, s.features_dir, s.features_run_dir, s.features_pipeline_model_dir]:
         Path(d).mkdir(parents=True, exist_ok=True)
 
     if not (0.0 <= s.zero_shot_label_threshold <= 1.0):
@@ -147,21 +133,17 @@ def load_settings(*, prefer_latest_run: bool = True) -> Settings:
     else:
         latest_file = Path(features_dir) / "LATEST_RUN"
         if prefer_latest_run and latest_file.exists():
-            # Read the stack and split by comma
             run_stack = [r.strip() for r in latest_file.read_text().split(",") if r.strip()]
             if run_stack:
-                features_run_id = run_stack[-1]  # Top of stack
+                features_run_id = run_stack[-1]
                 if len(run_stack) >= 2:
-                    previous_run_id = run_stack[-2] # One level down
+                    previous_run_id = run_stack[-2]
         
-        # Fallback if no stack exists
         if not features_run_id:
             features_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     features_run_dir = str(Path(features_dir) / "runs" / features_run_id)
     features_pipeline_model_dir = str(Path(features_run_dir) / "pipeline_models")
-
-    models_dir = resolve_path(os.getenv("MODELS_DIR"), "./data/models")
     
     bronze_dir = resolve_path(os.getenv("BRONZE_DIR"), str(Path(processed_dir) / "bronze"))
     silver_dir = resolve_path(os.getenv("SILVER_DIR"), str(Path(processed_dir) / "silver"))
@@ -175,9 +157,8 @@ def load_settings(*, prefer_latest_run: bool = True) -> Settings:
 
     gold_recipe_path = str(Path(gold_dir) / "modeling_recipe.parquet")
     gold_reviews_path = str(Path(gold_dir) / "modeling_reviews.parquet")
-    gold_ve_path = str(Path(gold_dir) / "modeling_ve.parquet")
-    gold_cf_path = str(Path(gold_dir) / "modeling_cf.parquet")
     
+    # Removed the _v8 hardcode
     labeled_gold_reviews_path = str(Path(processed_dir) / "labeling" / "zero_shot" / "labeled_gold_reviews.parquet")
     
     features_dataset_path = str(Path(features_run_dir) / "dataset.parquet")
@@ -215,7 +196,6 @@ def load_settings(*, prefer_latest_run: bool = True) -> Settings:
         features_dir=features_dir,
         features_run_dir=features_run_dir,
         features_pipeline_model_dir=features_pipeline_model_dir,
-        models_dir=models_dir,
         bronze_dir=bronze_dir,
         silver_dir=silver_dir,
         gold_dir=gold_dir,
@@ -225,8 +205,6 @@ def load_settings(*, prefer_latest_run: bool = True) -> Settings:
         silver_interactions_path=silver_interactions_path,
         gold_recipe_path=gold_recipe_path,
         gold_reviews_path=gold_reviews_path,    
-        gold_ve_path=gold_ve_path,
-        gold_cf_path=gold_cf_path,
         labeled_gold_reviews_path=labeled_gold_reviews_path,  
         features_dataset_path=features_dataset_path,
         features_splits_path=features_splits_path,

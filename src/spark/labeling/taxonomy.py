@@ -3,16 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-
-# NOTE:
-# - Keep tag ids stable once you start generating labels.
-# - Descriptions are for humans / reporting.
-# - hypotheses are for zero-shot (NLI-style) classifiers.
-#   They should read naturally when inserted into:
-#       "This review expresses that the recipe was {hypothesis}."
-#   or similar templates used in zero_shot.py.
-
-
 @dataclass(frozen=True)
 class Tag:
     id: str
@@ -320,17 +310,8 @@ def get_taxonomy(version: str = "v1") -> Dict[str, Tag]:
 
     return {t.id: t for t in tags}
 
-
 def get_tag_ids(version: str = "v1") -> List[str]:
     return list(get_taxonomy(version=version).keys())
-
-
-def get_zero_shot_candidate_labels(version: str = "v1") -> List[str]:
-    """
-    Candidate labels to pass to a zero-shot classifier.
-    """
-    return get_tag_ids(version=version)
-
 
 def get_label_to_hypotheses(version: str = "v1") -> Dict[str, List[str]]:
     """
@@ -338,7 +319,6 @@ def get_label_to_hypotheses(version: str = "v1") -> Dict[str, List[str]]:
     """
     tax = get_taxonomy(version=version)
     return {tid: tax[tid].hypotheses for tid in tax}
-
 
 def get_groups(version: str = "v1") -> Dict[str, List[str]]:
     """
