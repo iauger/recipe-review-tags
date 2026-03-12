@@ -12,10 +12,7 @@ from src.config import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
-# -------------------------
-# Environment helpers
-# -------------------------
-
+# Environment Setup Helpers
 def _resolve_python(s: Settings) -> tuple[str, str]:
     """Resolve python executables for driver + worker."""
     driver_py = (s.pyspark_driver_python or "").strip() or sys.executable or "python3"
@@ -31,10 +28,7 @@ def _configure_java_home(s: Settings) -> None:
         if Path(candidate).exists():
             os.environ["JAVA_HOME"] = candidate
 
-# -------------------------
-# Public API
-# -------------------------
-
+# Main Spark Session Helper
 def get_spark(app_name: str | None = None, *, debug: bool = False) -> SparkSession:
     """Create a SparkSession using settings from .env/config.py."""
     s = load_settings()

@@ -142,7 +142,7 @@ def build_features(
 
     write_parquet(df_out, s.features_dataset_path, partition_cols=None)
 
-    # 8. Metrics + manifest
+    # Metrics + manifest
     metrics = {
         "split_counts": _split_counts(df_out, "split"),
         "label_prevalence_by_split": _label_prevalence_by_split(df_out, label_cols, "split"),

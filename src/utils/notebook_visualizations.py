@@ -47,7 +47,6 @@ def plot_threshold_distribution(metrics: dict) -> None:
     plt.figure(figsize=(12, 8))
     sns.set_style("whitegrid")
     
-    # Added hue="tag" and legend=False to fix the Seaborn FutureWarning
     sns.barplot(data=thresh_df, x="threshold", y="tag", hue="tag", palette="viridis", legend=False)
     
     # Average line highlights the variance between specific and general tags
@@ -61,7 +60,6 @@ def plot_threshold_distribution(metrics: dict) -> None:
     plt.tight_layout()
     plt.show()
 
-# Updated to reflect the newly refactored Lakehouse structure!
 architecture_graph = """
 graph TD
     subgraph P1 [Phase 1: Ingestion - Bronze]

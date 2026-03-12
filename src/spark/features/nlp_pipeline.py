@@ -12,7 +12,7 @@ from pyspark.sql import functions as F
 
 logger = logging.getLogger(__name__)
 
-# --- SPECS ---
+# specs for text processing and embedding
 @dataclass(frozen=True)
 class TextFeatureSpec:
     text_col: str
@@ -41,7 +41,7 @@ class Word2VecSpec:
     max_iter: int = 15
     seed: int = 42
 
-# --- PIPELINE BUILDERS ---
+# pipeline stages for text processing
 def build_stopwords(spec: TextFeatureSpec) -> list[str]:
     stopwords = []
     if spec.use_default_stopwords:
@@ -72,7 +72,7 @@ def drop_intermediate_columns(df: DataFrame, spec: TextFeatureSpec) -> DataFrame
     cols_to_drop = [spec.token_col, f"{spec.token_col}_nostop", spec.ngram_col if spec.enable_ngrams else None, spec.token_union_col]
     return df.drop(*[c for c in cols_to_drop if c and c in df.columns])
 
-# --- EMBEDDING LOGIC ---
+# Word2Vec training and embedding generation
 def fit_word2vec(train_df: DataFrame, *, spec: Word2VecSpec) -> Word2VecModel:
     w2v = Word2Vec(inputCol=spec.input_col, outputCol=spec.output_col, vectorSize=spec.vector_size, windowSize=spec.window_size, minCount=spec.min_count, maxIter=spec.max_iter, seed=datetime.now().microsecond)
     train_tokens = train_df.where(F.col(spec.input_col).isNotNull() & (F.size(F.col(spec.input_col)) > 0))

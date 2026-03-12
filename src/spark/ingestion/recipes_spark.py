@@ -28,7 +28,6 @@ def python_list_string_to_array_double(colname: str) -> Column:
 
 
 def dtype_corrections(df: DataFrame) -> DataFrame:
-    # Spark casts are "coerce-like": invalid parses become null (similar to errors="coerce")
     return (
         df.withColumn("id", F.col("id").cast("string"))
           .withColumn("minutes", F.col("minutes").cast("double"))
@@ -41,33 +40,28 @@ def dtype_corrections(df: DataFrame) -> DataFrame:
 
 
 def clean_ingredients(df: DataFrame) -> DataFrame:
-    # Parse -> normalize each ingredient -> replace spaces with underscores -> join
     arr = python_list_string_to_array_str("ingredients")
     cleaned_arr = F.transform(
         arr,
-        lambda x: F.regexp_replace(normalize_text_spark(x), r"\s+", "_")
+        lambda x: F.regexp_replace(normalize_text_spark(x), r"\s+", "_") # Replace spaces with underscores to keep multi-word ingredients together
     )
     return df.withColumn("ingredients_clean", F.concat_ws(" ", cleaned_arr))
 
 
 def clean_steps(df: DataFrame) -> DataFrame:
-    # Parse -> join steps -> normalize
     arr = python_list_string_to_array_str("steps")
-    joined = F.concat_ws(" ", arr)
+    joined = F.concat_ws(" ", arr) 
     return df.withColumn("steps_clean", normalize_text_spark(joined))
 
 
 def clean_tags(df: DataFrame) -> DataFrame:
-    # Parse -> normalize each tag -> join
     arr = python_list_string_to_array_str("tags")
-    cleaned_arr = F.transform(arr, lambda x: normalize_text_spark(x))
+    cleaned_arr = F.transform(arr, lambda x: normalize_text_spark(x)) 
     return df.withColumn("tags_clean", F.concat_ws(" ", cleaned_arr))
 
 
 def extract_nutrition(df: DataFrame) -> DataFrame:
-    # Parse nutrition list -> extract indices into columns
-    # Order: calories, fat, sugar, sodium, protein, saturated_fat, carbs
-    arr = python_list_string_to_array_double("nutrition")
+    arr = python_list_string_to_array_double("nutrition") # parse nutrition list into array<double>
 
     return (
         df.withColumn("calories",       F.element_at(arr, 1))  # 1-indexed

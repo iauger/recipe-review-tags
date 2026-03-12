@@ -23,9 +23,7 @@ def get_taxonomy(version: str = "v1") -> Dict[str, Tag]:
         raise ValueError(f"Unknown taxonomy version: {version}")
 
     tags: List[Tag] = [
-        # -------------------------
-        # Taste / flavor
-        # -------------------------
+        # Taste / seasoning
         Tag(
             id="too_salty",
             label="Too salty",
@@ -120,9 +118,7 @@ def get_taxonomy(version: str = "v1") -> Dict[str, Tag]:
             polarity="positive",
         ),
 
-        # -------------------------
-        # Texture / doneness
-        # -------------------------
+        # Texture / execution
         Tag(
             id="dry",
             label="Dry",
@@ -185,9 +181,7 @@ def get_taxonomy(version: str = "v1") -> Dict[str, Tag]:
             polarity="positive",
         ),
 
-        # -------------------------
-        # Process / difficulty
-        # -------------------------
+        # Process / execution
         Tag(
             id="easy_quick",
             label="Easy / quick",
@@ -221,9 +215,7 @@ def get_taxonomy(version: str = "v1") -> Dict[str, Tag]:
             polarity="negative",
         ),
 
-        # -------------------------
-        # Ingredients / adjustments
-        # -------------------------
+        # Ingredient issues
         Tag(
             id="substitution_modification",
             label="Substitution / modification",
@@ -257,9 +249,7 @@ def get_taxonomy(version: str = "v1") -> Dict[str, Tag]:
             polarity="negative",
         ),
 
-        # -------------------------
-        # Outcome / intent
-        # -------------------------
+        # Outcomes / recommendations
         Tag(
             id="would_make_again",
             label="Would make again",

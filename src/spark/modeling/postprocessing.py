@@ -24,7 +24,7 @@ def resolve_negation_conflicts(df: DataFrame) -> DataFrame:
         s_pos, s_neg = f"sim_{pos}", f"sim_{neg}"
         p_pos, p_neg = f"pred_{pos}", f"pred_{neg}"
         
-        # Resolve: Keep the label with the strongest semantic signal
+        # Keep the label with the strongest semantic signal
         pruned_df = pruned_df.withColumn(
             p_pos,
             F.when((F.col(p_pos) == 1) & (F.col(p_neg) == 1) & (F.col(s_pos) <= F.col(s_neg)), 0)

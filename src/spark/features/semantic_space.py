@@ -11,7 +11,7 @@ from pyspark.ml.functions import vector_to_array
 
 logger = logging.getLogger(__name__)
 
-# --- SPECS ---
+# specs for prototype-based semantic space construction
 @dataclass(frozen=True)
 class PrototypeSpec:
     split_col: str = "split"
@@ -22,7 +22,7 @@ class PrototypeSpec:
     out_centroid_col: str = "centroid"
     out_count_col: str = "pos_count"
 
-# --- MATH HELPERS ---
+# math helper for native cosine similarity
 def _native_cosine_sim(col_a: Union[str, Column], col_b: Union[str, Column]) -> Column:
     """Calculates cosine similarity natively using arrays."""
     c1 = F.col(col_a) if isinstance(col_a, str) else col_a
@@ -40,7 +40,7 @@ def _native_cosine_sim(col_a: Union[str, Column], col_b: Union[str, Column]) -> 
     norm_a, norm_b = F.sqrt(square_sum(c1)), F.sqrt(square_sum(c2))
     return F.when((norm_a == 0.0) | (norm_b == 0.0), 0.0).otherwise(dot_product / (norm_a * norm_b))
 
-# --- CENTROIDS & CALIBRATION ---
+# centroid calculation and thresholding logic
 def build_tag_centroids(df: DataFrame, *, spec: PrototypeSpec, labels: Optional[Iterable[str]] = None) -> DataFrame:
     """Calculates the mean vector (centroid) for each tag based on the Silver standard labels."""
     y_cols = [f"{spec.label_prefix}{t}" for t in labels] if labels else [c for c in df.columns if c.startswith(spec.label_prefix)]

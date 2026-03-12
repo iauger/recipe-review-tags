@@ -38,10 +38,10 @@ def run_scale_out_inference(spark: SparkSession):
     spec = TextFeatureSpec(text_col="review_clean", output_col="features", token_union_col="tokens_all")
     w2v_spec = Word2VecSpec(input_col="tokens_all", output_col="review_embeddings", vector_size=128, window_size=5)
 
-    # 2. Vectorize Corpus
+    # Vectorize Corpus
     full_featured_df = apply_feature_pipeline(raw_corpus, prep_model, w2v_model, spec, w2v_spec)
 
-    # 3. Load Calibration Context (Centroids & Thresholds)
+    # Load Calibration Context (Centroids & Thresholds)
     with open(s.features_metrics_path, "r") as f:
         metrics = json.load(f)
     thresholds = metrics["tag_thresholds"]
@@ -49,7 +49,7 @@ def run_scale_out_inference(spark: SparkSession):
     centroids_df = spark.read.parquet(s.features_tag_centroids_path)
     local_centroids = {row['tag']: row['centroid'] for row in centroids_df.collect()}
 
-    # 4. Single-Pass Similarity Projection
+    # Single-Pass Similarity Projection
     sim_exprs = [
         _native_cosine_sim(vector_to_array(F.col("features")), F.lit(local_centroids[t])).alias(f"sim_{t}")
         for t in thresholds.keys() if t in local_centroids
@@ -64,10 +64,9 @@ def run_scale_out_inference(spark: SparkSession):
     
     scored_df = scored_df.select(*final_cols)
 
-    # 6. Post-processing (Prune contradictions)
+    # Prune contradictions
     pruned_df = resolve_negation_conflicts(scored_df)
 
-    # 7. Materialize and Save Gold Dataset
     output_path = f"{s.gold_dir}/gold_labeled_reviews_{s.features_run_id}.parquet"
     write_parquet(pruned_df.repartition(40), output_path)
     

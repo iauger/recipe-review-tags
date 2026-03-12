@@ -14,7 +14,7 @@ from src.spark.session import get_spark
 
 logger = logging.getLogger(__name__)
 
-# --- SCHEMAS ---
+# data schemas
 RAW_RECIPES_SCHEMA = StructType([
     StructField("name", StringType(), True),
     StructField("id", LongType(), True),
@@ -38,7 +38,7 @@ RAW_INTERACTIONS_SCHEMA = StructType([
     StructField("review", StringType(), True),
 ])
 
-# --- IO FUNCTIONS ---
+# i/o helpers
 def download_kaggle_dataset(
     s: Settings,
     dataset: str = "shuyangli94/food-com-recipes-and-user-interactions",
@@ -135,7 +135,7 @@ def write_parquet(
     writer.parquet(str(out_path))
     return out_path
 
-# --- BRONZE PIPELINE ---
+# bronze pipeline
 @dataclass(frozen=True)
 class PipelineConfig:
     settings: Settings

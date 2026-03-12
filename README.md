@@ -58,6 +58,7 @@ The codebase is organized into cleanly scoped, single-responsibility modules:
 │       ├── text_cleaning.py      # Regex and string normalization
 │       └── notebook_visualizations.py # Seaborn & Mermaid reporting utilities
 ├── notebooks/
+│   ├── 00_project_report.ipynb         # Formal project report
 │   ├── 01_ingestion_and_labeling.ipynb # EDA, Data Prep, and Transformer Labeling
 │   └── 02_fe_and_scaling.ipynb         # Semantic Benchmarking and Scale-out Analytics
 └── data/                         # .gitignored raw/processed Lakehouse layers
